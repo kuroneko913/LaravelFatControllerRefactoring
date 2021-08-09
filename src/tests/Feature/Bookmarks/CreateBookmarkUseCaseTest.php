@@ -81,5 +81,4 @@ class CreateBookmarkUseCaseTest extends TestCase
         $this->useCase = $this->app->make(CreateBookmarkUseCase::class);
         $this->useCase->handle($url, $category, $comment);
     }
-
 }
