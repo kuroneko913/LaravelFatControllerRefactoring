@@ -4,8 +4,11 @@
 namespace App\Http\Controllers\Bookmarks;
 
 use App\Bookmark\UseCase\CreateBookmarkUseCase;
+use App\Bookmark\UseCase\ShowBookmarkListCategoryPageUseCase;
 use App\Bookmark\UseCase\ShowBookmarkListPageUseCase;
+use App\Bookmark\UseCase\UpdateBookmarkUseCase;
 use App\Http\Requests\CreateBookmarkRequest;
+use App\Http\Requests\UpdateBookmarkRequest;
 use App\Http\Controllers\Controller;
 use App\Lib\LinkPreview\LinkPreview;
 use App\Models\Bookmark;
@@ -24,6 +27,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use tests\Feature\Bookmarks\ShowBookmarkListCategoryPageTest;
 
 class BookmarkController extends Controller
 {
@@ -41,42 +45,17 @@ class BookmarkController extends Controller
     /**
      * カテゴリ別ブックマーク一覧
      *
-     * カテゴリが数字で無かった場合404
-     * カテゴリが存在しないIDが指定された場合404
-     *
-     * title, descriptionにはカテゴリ名とカテゴリのブックマーク投稿数を含める
-     *
-     * 表示する内容は普通の一覧と同様
-     * しかし、カテゴリに関しては現在のページのカテゴリを除いて表示する
-     *
      * @param Request $request
+     * @param ShowBookmarkListCategoryPageUseCase
      * @return Application|Factory|View
      */
-    public function listCategory(Request $request)
+    public function listCategory(Request $request, ShowBookmarkListCategoryPageUseCase $useCase)
     {
-        $category_id = $request->category_id;
-        if (!is_numeric($category_id)) {
-            abort(404);
-        }
-
-        $category = BookmarkCategory::query()->findOrFail($category_id);
-
-        SEOTools::setTitle("{$category->display_name}のブックマーク一覧");
-        SEOTools::setDescription("{$category->display_name}に特化したブックマーク一覧です。みんなが投稿した{$category->display_name}のブックマークが投稿順に並んでいます。全部で{$category->bookmarks->count()}件のブックマークが投稿されています");
-
-        $bookmarks = Bookmark::query()->with(['category', 'user'])->where('category_id', '=', $category_id)->latest('id')->paginate(10);
-
-        // 自身のページのカテゴリを表示しても意味がないのでそれ以外のカテゴリで多い順に表示する
-        $top_categories = BookmarkCategory::query()->withCount('bookmarks')->orderBy('bookmarks_count', 'desc')->orderBy('id')->where('id', '<>', $category_id)->take(10)->get();
-
-        $top_users = User::query()->withCount('bookmarks')->orderBy('bookmarks_count', 'desc')->take(10)->get();
-
-        return view('page.bookmark_list.index', [
-            'h1' => "{$category->display_name}のブックマーク一覧",
-            'bookmarks' => $bookmarks,
-            'top_categories' => $top_categories,
-            'top_users' => $top_users
-        ]);
+        if (!is_numeric($request->category_id)) abort(404);
+        return view(
+            'page.bookmark_list.index', 
+            $useCase->handle($request->category_id)
+        );
     }
 
     /**
@@ -147,43 +126,16 @@ class BookmarkController extends Controller
 
     /**
      * ブックマーク更新
-     * コメントとカテゴリのバリデーションは作成時のそれと合わせる
-     * 本人以外は編集できない
-     * ブックマーク後24時間経過したものは編集できない仕様
      *
-     * @param Request $request
+     * @param UpdateBookmarkRequest $request
      * @param int $id
+     * @param UpdateBookmarkUseCase $useCase
      * @return Application|\Illuminate\Http\RedirectResponse|\Illuminate\Routing\Redirector
-     * @throws ValidationException
      */
-    public function update(Request $request, int $id)
+    public function update(UpdateBookmarkRequest $request, int $id, UpdateBookmarkUseCase $useCase)
     {
-        if (Auth::guest()) {
-            // @note ここの処理はユーザープロフィールでも使われている
-            return redirect('/login');
-        }
-
-        Validator::make($request->all(), [
-            'comment' => 'required|string|min:10|max:1000',
-            'category' => 'required|integer|exists:bookmark_categories,id',
-        ])->validate();
-
-        $model = Bookmark::query()->findOrFail($id);
-
-        if ($model->can_not_delete_or_edit) {
-            throw ValidationException::withMessages([
-                'can_edit' => 'ブックマーク後24時間経過したものは編集できません'
-            ]);
-        }
-
-        if ($model->user_id !== Auth::id()) {
-            abort(403);
-        }
-
-        $model->category_id = $request->category;
-        $model->comment = $request->comment;
-        $model->save();
-
+        $useCase->handle($id, $request->category, $request->comment);
+        
         // 成功時は一覧ページへ
         return redirect('/bookmarks', 302);
     }
